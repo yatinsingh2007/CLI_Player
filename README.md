@@ -1,166 +1,119 @@
-# 🎵 Node.js CLI Media Player — System Architecture
+# 🎵 CLI Media Player — Key-Driven System Architecture
 
-A lightweight, zero-dependency Node.js command-line interface (CLI) media player powered by VLC dummy mode, Apple `afinfo` track duration parsing, zero-flicker ANSI rendering, and raw terminal keyboard controls.
+System architecture and key-driven control specifications mapped directly from [`raw_io.js`](file:///Users/kshtriyatinsingh/Desktop/Projects/CLI_Player/raw_io.js) and [`cli_player.js`](file:///Users/kshtriyatinsingh/Desktop/Projects/CLI_Player/cli_player.js).
 
 ---
 
-## 🏛️ System Architecture (Mermaid Diagram)
+## 🏛️ System Architecture Diagram (Key-Driven Operations)
 
 ```mermaid
 flowchart TD
-    subgraph INPUT ["⌨️ INTERACTIVE INPUT SYSTEM"]
-        node1["📥 Terminal Raw Input (process.stdin)"]
-        node2["🎮 Key Code Router & Mapper"]
+    subgraph KEYBOARD ["⌨️ RAW KEYBOARD INPUT CONTROL (raw_io.js)"]
+        STDIN["📥 process.stdin.setRawMode(true)<br/><i>Raw Byte Event Stream</i>"]
+        DECODER{"🔑 Hex Byte Decoder & Matcher"}
+        
+        CTRL_C["🔴 Ctrl + C<br/><code>data[0] === 0x03</code><br/><i>Exit Process</i>"]
+        UP_ARROW["⬆️ Arrow UP<br/><code>0x1b 0x5b 0x41</code><br/><i>Navigate Previous Song</i>"]
+        DOWN_ARROW["⬇️ Arrow DOWN<br/><code>0x1b 0x5b 0x42</code><br/><i>Navigate Next Song</i>"]
+        ENTER_KEY["↵ Enter Key<br/><code>0x0d / 0x0a</code><br/><i>Trigger Play Song</i>"]
     end
 
-    subgraph ENGINE ["⚡ CORE STATE & METADATA"]
-        node3["📂 Songs Directory Scanner"]
-        node4["⏱️ macOS Duration Extractor (afinfo)"]
-        node5["🧠 Global State Manager"]
+    subgraph ENGINE ["⚡ PLAYBACK ENGINE (cli_player.js)"]
+        LIST_SONGS["📂 listSongs(songDirectoryPath)<br/>• Scan ./songs with <code>fs.readdirSync</code><br/>• Log numbered track list"]
+        PLAY_SONG["▶️ playSong(songFilePath)<br/>• Spawn <code>ffplay -nodisp -autoexit</code><br/>• Log stdout & stderr data events"]
     end
 
-    subgraph PLAYBACK ["🔊 VLC PLAYBACK ENGINE"]
-        node6["🎛️ VLC Subprocess Controller"]
-        node7["📶 Unix Signal Controller"]
-        node8["⚙️ VLC Dummy Instance (vlc --intf dummy)"]
+    subgraph SUBPROCESS ["🔊 AUDIO SUBPROCESS ENGINE"]
+        FFPLAY["⚙️ ffplay Child Process"]
+        STDOUT_EVENT["📥 stdout event listener"]
+        STDERR_EVENT["📥 stderr event listener"]
     end
 
-    subgraph DISPLAY ["🖥️ ANSI TERMINAL RENDERER"]
-        node9["📊 Progress Bar Calculator"]
-        node10["🎨 Dynamic ANSI UI Engine"]
-        node11["📺 Terminal Display Output (stdout)"]
-    end
+    STDIN --> DECODER
+    DECODER -->|data[0] === 0x03| CTRL_C
+    DECODER -->|0x1b 0x5b 0x41| UP_ARROW
+    DECODER -->|0x1b 0x5b 0x42| DOWN_ARROW
+    DECODER -->|0x0d / 0x0a| ENTER_KEY
 
-    node1 --> node2
-    node2 -->|Selection & Navigation| node5
-    node2 -->|Play / Pause / Stop| node6
-
-    node3 --> node5
-    node4 --> node5
-
-    node6 -->|Spawn stdio:pipe| node8
-    node6 -->|Send Signal| node7
-    node7 -->|SIGSTOP / SIGCONT| node8
-    node8 -->|Auto-Play Next Track| node5
-
-    node5 -->|State & Elapsed Time| node9
-    node9 --> node10
-    node10 --> node11
+    ENTER_KEY -->|Triggers Playback| PLAY_SONG
+    PLAY_SONG -->|Spawns| FFPLAY
+    FFPLAY --> STDOUT_EVENT
+    FFPLAY --> STDERR_EVENT
+    LIST_SONGS -->|Directory Scan| SONGS_DIR["📁 ./songs"]
 ```
 
 ---
 
-## 🔄 Component Data Flow Architecture
+## ⌨️ Key Operation Specifications
 
-```mermaid
-flowchart LR
-    subgraph USER ["👤 User Input"]
-        kb["⌨️ Raw Keypress Bytes"]
-    end
+Operating the CLI media player relies exclusively on raw keystrokes captured via `process.stdin.setRawMode(true)` rather than mouse or terminal cursor interactions:
 
-    subgraph APP ["⚙️ CLI Core Application"]
-        decode["🔑 ASCII Decoder"]
-        ctrl["🕹️ Main Controller"]
-        state["📦 State Store"]
-        afinfo["⏳ afinfo Metadata Parser"]
-    end
-
-    subgraph ENGINE ["🔊 VLC Engine"]
-        vlc["⚙️ VLC Subprocess"]
-    end
-
-    subgraph SCREEN ["🖥️ Display Output"]
-        ui["📺 ANSI Terminal UI"]
-    end
-
-    kb --> decode
-    decode --> ctrl
-    ctrl --> state
-    afinfo --> state
-    ctrl -->|Spawn / Signal| vlc
-    state --> ui
-```
+| Key Input | Hex Byte Matcher | Decimal Bytes | Target Operation |
+| :--- | :--- | :--- | :--- |
+| **Ctrl + C** | `data[0] === 0x03` | `3` | Exit application (`process.exit(0)`) |
+| **Arrow UP** | `data[0] === 0x1b && data[1] === 0x5b && data[2] === 0x41` | `27 91 65` | Move active track selection UP |
+| **Arrow DOWN** | `data[0] === 0x1b && data[1] === 0x5b && data[2] === 0x42` | `27 91 66` | Move active track selection DOWN |
+| **Enter Key** | `data[0] === 0x0d \|\| data[0] === 0x0a` | `13` or `10` | Play highlighted track via `playSong()` |
 
 ---
 
-## 🎨 Interactive Terminal UI Preview
+## 🛠️ Codebase Component Specifications
 
+### 1. Key Decoder Module (`raw_io.js`)
+Handles raw byte-level decoding from terminal input stream:
+```javascript
+process.stdin.setRawMode(true);
+
+process.stdin.on('data', (data) => {
+    console.log(data.toString(), data);
+
+    // Ctrl + C: Exit
+    if (data[0] === 0x03) {
+        process.exit(0);
+    }
+
+    // Arrow keys
+    if (data[0] === 0x1b && data[1] === 0x5b) {
+        if (data[2] === 0x41) {
+            console.log("Arrow UP");
+        }
+        if (data[2] === 0x42) {
+            console.log("Arrow DOWN");
+        }
+    }
+
+    // Enter key (Carriage Return / Newline)
+    if (data[0] === 0x0d || data[0] === 0x0a) {
+        console.log("Enter key");
+    }
+});
 ```
-=====================================================
-           🎵  NODE.JS CLI MEDIA PLAYER  🎵          
-=====================================================
 
-  AUDIO LIBRARY (4 Tracks):
-  ---------------------------------------------------
-     ▶ [01] Chris Brown, Tyga - Girl You Loud.mp3
-   > ⏸ [02] OneRepublic - Sunshine.mp3
-     [03] Samuel Kim & Lorien - I Really Want to Stay at Your House.mp3
-     [04] Wuthering Waves, Tarokiki - Voyaging Star's Farewell.mp3
-  ---------------------------------------------------
+### 2. Player Engine Module (`cli_player.js`)
+Handles song directory listing and spawning `ffplay` audio subprocess:
+```javascript
+const { spawn } = require('child_process');
 
-  CURRENT PLAYBACK:
-  Track  : OneRepublic - Sunshine.mp3
-  Status : [PAUSED]
-  Progress: [███████████████░░░░░░░░░░░░░░░] 50.0% (01:21 / 02:42)
+function listSongs(songDirectoryPath) {
+    songs = fs.readdirSync(songDirectoryPath);
+    songs.forEach((song, index) => {
+        console.log(`${index + 1}. ${song}`);
+    });
+}
 
-=====================================================
-Controls: [↑/↓/k/j] Nav | [Enter] Play | [Space] Pause/Play | [S] Stop | [Q] Quit
-```
+function playSong(songFilePath) {
+    const process = spawn('ffplay', [
+        '-nodisp',
+        '-autoexit',
+        songFilePath
+    ]);
 
----
+    process.stdout.on('data', (data) => {
+        console.log(`stdout: ${data}`);
+    });
 
-## 🛠️ Subsystem Technical Specifications
-
-> [!NOTE]
-> All core functions operate natively using Node.js standard libraries (`child_process`, `fs`, `path`) without third-party npm dependencies.
-
-### 1️⃣ Audio Directory Scanner
-- **Path:** `./songs` relative to execution root.
-- **Filtering Rule:** Ignores dotfiles (`.DS_Store`) and keeps supported extensions (`.mp3`, `.m4a`, `.wav`, `.flac`, `.aac`, `.ogg`).
-- **Sorting:** Alphanumeric natural sort order.
-
-### 2️⃣ Metadata Extractor (`afinfo`)
-- **Utility:** Apple File Info (`afinfo`)
-- **Execution:** Async `execFile('afinfo', [filePath])`
-- **Regex Extraction:**
-  $$\text{duration} = \text{parseFloat}(\text{stdout.match}(/\text{estimated duration: }([\d.]+)\text{ sec}/i)[1])$$
-- **Cache:** In-memory `Map<string, number>` prevents duplicate process spawns.
-
-### 3️⃣ VLC Subprocess Engine
-- **Command Flags:** `vlc --intf dummy --play-and-exit <filepath>`
-- **Standard I/O:** `stdio: 'pipe'` completely isolates VLC standard output.
-- **Process Signals:**
-  - `SIGSTOP`: Suspends child process (Pause).
-  - `SIGCONT`: Resumes child process (Resume).
-  - `SIGKILL`: Kills process on track change or exit.
-
-### 4️⃣ Keyboard Raw Mode Mapping
-
-| Key Input | ASCII Code | Trigger Action |
-| :--- | :--- | :--- |
-| `Spacebar` | `32` | Toggle Play / Pause |
-| `Enter` | `13` / `10` | Play Selected Track |
-| `Up Arrow` / `k` | `27 91 65` / `107` | Navigate Up |
-| `Down Arrow` / `j` | `27 91 66` / `106` | Navigate Down |
-| `S` / `s` | `115` / `83` | Stop Playback |
-| `Q` / `q` / `Ctrl+C` | `113` / `81` / `3` | Clean Quit & Restore Terminal |
-
----
-
-## ⚡ Signal & Process Lifecycle Workflow
-
-```mermaid
-flowchart TD
-    start["🚀 Process Launch"] --> init["1. Hide Cursor & Enable Raw Stdin Mode"]
-    init --> scan["2. Scan ./songs & Parse Track Durations"]
-    scan --> render["3. Render Initial ANSI UI Screen"]
-    
-    render --> loop{"🔄 User Key Event"}
-    loop -->|Enter/Space| spawn["Spawn VLC stdio:pipe"]
-    loop -->|Up/Down| nav["Update Selection & Re-render"]
-    loop -->|Spacebar| signal["Send SIGSTOP / SIGCONT Signal"]
-    
-    loop -->|Q / Ctrl+C| exit["🛑 Process Cleanup & Termination"]
-    exit --> stop_vlc["Kill VLC Subprocess SIGKILL"]
-    stop_vlc --> restore["Restore Cursor & Disable Raw Mode"]
+    process.stderr.on('data', (data) => {
+        console.log(`stderr: ${data}`);
+    });
+}
 ```
