@@ -10,6 +10,7 @@ let vlcPlayProcess = undefined;
 
 let totalDuration = undefined;
 let timeElapsed = undefined;
+let elapsedInterval = undefined;
 
 async function getSongDuration(songFilePath) {
     return new Promise((resolve, reject) => {
@@ -22,10 +23,22 @@ async function getSongDuration(songFilePath) {
 }
 
 function startElapsedTracking() {
+    // clear any interval left over from a previous song so timers don't stack
+    if (elapsedInterval !== undefined) {
+        clearInterval(elapsedInterval)
+    }
+
     timeElapsed = 0;
-    setInterval(() => {
+    elapsedInterval = setInterval(() => {
         if (vlcPlayProcess !== undefined && !isPaused) {
             timeElapsed += 0.1
+
+            // song finished: pin to the total and stop ticking
+            if (totalDuration !== undefined && timeElapsed >= totalDuration) {
+                timeElapsed = totalDuration
+                clearInterval(elapsedInterval)
+                elapsedInterval = undefined
+            }
         }
 
         listSongs(songDir)
@@ -43,7 +56,7 @@ function renderBar(percentagePlayed) {
 }
 
 function listSongs(songDirPath) {
-    allSongs = fs.readdirSync(songDirPath);
+    allSongs = fs.readdirSync(songDirPath).filter((name) => name.toLowerCase().endsWith(".mp3"));
 
     process.stdout.write("\x1B[3;1H");
 
@@ -56,7 +69,7 @@ function listSongs(songDirPath) {
 
     if (timeElapsed !== undefined && totalDuration !== undefined) {
         const percentagePlayed = Math.min(100, ((timeElapsed / totalDuration) * 100).toFixed(2))
-        process.stdout.write(`\r\x1B[0K${Math.ceil(timeElapsed)} / ${totalDuration} || ${percentagePlayed} %`)
+        process.stdout.write(`\r\x1B[0K${percentagePlayed} %`)
         const bar = renderBar(percentagePlayed)
         process.stdout.write(`\n\x1B[0K${bar}`)
     }
@@ -68,6 +81,15 @@ async function playSong(cursor) {
         vlcPlayProcess.kill(15)
         vlcPlayProcess = undefined
     }
+
+    // reset progress state so the previous song's bar doesn't linger while
+    // we await the new song's duration
+    if (elapsedInterval !== undefined) {
+        clearInterval(elapsedInterval)
+        elapsedInterval = undefined
+    }
+    timeElapsed = undefined;
+    totalDuration = undefined;
 
     isPaused = false;
     const songFinalPath = path.join(songDir, allSongs[cursor]);
